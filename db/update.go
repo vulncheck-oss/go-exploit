@@ -1,0 +1,62 @@
+package db
+
+import (
+	"time"
+
+	"github.com/vulncheck-oss/go-exploit/output"
+	// pure go sqlite3 driver.
+	_ "modernc.org/sqlite"
+)
+
+const (
+	verifiedUpsert = `INSERT INTO verified (id, created, software_name, installed, version, rhost, rport)` +
+		`VALUES ((SELECT id FROM verified WHERE rhost = ? AND rport = ? AND software_name = ?), ?, ?, ?, ?, ?, ?)` +
+		`ON CONFLICT(id) DO UPDATE SET ` +
+		`software_name = excluded.software_name,` +
+		`installed = excluded.installed,` +
+		`rhost = excluded.rhost,` +
+		`rport = excluded.rport,` +
+		`version = excluded.version;`
+
+	cacheUpsert = `INSERT INTO http_cache (id, created, rhost, rport, uri, data)` +
+		`VALUES ((SELECT id FROM http_cache WHERE rhost = ? AND rport = ? AND uri = ?), ?, ?, ?, ?, ?)` +
+		`ON CONFLICT(id) DO UPDATE SET ` +
+		`rhost = excluded.rhost,` +
+		`rport = excluded.rport,` +
+		`uri = excluded.uri,` +
+		`data = excluded.data;`
+)
+
+func UpdateVerified(software string, installed bool, version string, rhost string, rport int) bool {
+	if GlobalSQLHandle == nil {
+		return true
+	}
+
+	_, err := GlobalSQLHandle.Exec(verifiedUpsert, rhost, rport, software, time.Now().Unix(), software, installed, version, rhost, rport)
+	if err != nil {
+		output.PrintFrameworkError(err.Error())
+
+		return false
+	}
+
+	return true
+}
+
+// Attempt to cache the provided HTTP httpResp in the database.
+func CacheHTTPResponse(rhost string, rport int, path string, httpResp []byte) {
+	if GlobalSQLHandle == nil {
+		return
+	}
+
+	// only cache up to a user configurable size
+	if len(httpResp) > GlobalHTTPRespCacheLimit {
+		return
+	}
+
+	_, err := GlobalSQLHandle.Exec(cacheUpsert, rhost, rport, path, time.Now().Unix(), rhost, rport, path, httpResp)
+	if err != nil {
+		output.PrintfFrameworkError("Error during caching: %s", err.Error())
+
+		return
+	}
+}
